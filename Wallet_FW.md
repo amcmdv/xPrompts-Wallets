@@ -51,9 +51,8 @@ The resulting firmware can be flashed to an ARM Cortex‑M board (e.g., STM32, n
 ---
 
 ## Why this matters  
-Gamified systems often live at the intersection of **rules, enforcement, and recognition**. By recasting such a system in assembly language, we make the relationship between *abstract rules* and *physical enforcement* visible.  
 
-Assembly coding is therefore not only about performance; it is also about **transparency and trust**: we see every instruction, and we know exactly how the system enforces its promises.  
+Assembly coding is not only about performance; it is also about **transparency and trust**: we see every instruction, and we know exactly how the system enforces its promises.  
 
 ---
 
