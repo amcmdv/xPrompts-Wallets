@@ -1,6 +1,6 @@
 ;
 ; wallet_fw_thumb.s
-; Scenario 8 — "Crypto Charity Wallet" recognition firmware (fun demo)
+; Scenario — "Crypto Charity Wallet" recognition firmware (fun demo)
 ; Target: ARM Cortex-M4 (Thumb-2), GNU as syntax (.syntax unified)
 ; Notes:
 ;  - This is a didactic, cut‑down firmware showing low‑level control flow,
