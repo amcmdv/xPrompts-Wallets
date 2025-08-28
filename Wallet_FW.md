@@ -1,6 +1,6 @@
 # Scenario 8: Crypto Charity Wallet — Assembly Demo
 
-📄 [Download Pitch Deck One Pager PDF  
+📄 Download Pitch Deck One Pager PDF  
 
 This project explores, in a playful yet rigorous way, how one might encode a **crypto-charity wallet** entirely in **ARM Cortex‑M assembly language**. The exercise is not meant to deliver a production wallet, but rather to demonstrate, in concrete low-level terms, how *rules and recognition systems* can be represented directly at the hardware/software boundary.  
 
