@@ -1,4 +1,4 @@
-# Scenario 8: Crypto Charity Wallet — Recognition Firmware (Fun Demo)
+# Scenario 8: Crypto Charity Wallet — Recognition Firmware
 
 ⚠️ This is a **ARM Cortex‑M4 assembly** skeleton that implements the core mechanics of Scenario 8:
 
@@ -22,7 +22,7 @@ arm-none-eabi-objcopy -O ihex wallet_fw_thumb.elf wallet_fw_thumb.hex
 - **Low-level control:** direct **MMIO** for TRNG, NFC, GPIO; interrupt handlers for **NFC APDUs** and TRNG readiness.
 - **Security primitives:**
   - `memcmp_ct` for constant‑time comparisons.
-  - `Verify_Donation_Signature_Ct` shows the calling convention and zeroization pattern (replace with real ECDSA).
+  - `Verify_Donation_Signature_Ct` shows the calling convention and zeroisation pattern (replace with real ECDSA).
   - `SecureBoot_Verify` demonstrates constant‑time firmware hash checking (replace with real hashing).
 - **Durability:** `Flash_Append_Record` maintains a compact log `[seq|amount|crc]` with simple wear‑leveling via modulo slotting (replace with real page erases and verify‑after‑write).
 
