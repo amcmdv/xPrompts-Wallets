@@ -1,4 +1,4 @@
-# Scenario 8: Crypto Charity Wallet — Recognition Firmware
+# Crypto Charity Wallet — Recognition Firmware
 
 ⚠️ This is a **ARM Cortex‑M4 assembly** skeleton that implements the core mechanics of Scenario 8:
 
