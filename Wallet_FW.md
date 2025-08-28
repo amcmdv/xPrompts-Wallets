@@ -1,4 +1,4 @@
-# Scenario 8: Crypto Charity Wallet — Assembly Demo
+# Scenario : Crypto Charity Wallet — Assembly Demo
 
 📄 Download Pitch Deck One Pager PDF  
 
