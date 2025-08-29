@@ -1,6 +1,6 @@
 # Crypto Charity Wallet — Recognition Firmware
 
-⚠️ This is a **ARM Cortex‑M4 assembly** skeleton that implements the core mechanics of Scenario 8: Shows how rules of recognition can live directly at the hardware level
+⚠️ This is a **ARM Cortex‑M4 assembly** skeleton that implements the core mechanics of this Scenario shows how rules of recognition can live directly at the hardware level
 
 - Accept a **DONATE** APDU (amount + signature), verify in **constant‑time** (stubbed), append a donation record to a flash‑like log with **CRC32**, and set a **recognition‑ready** flag.
 - Upon **GET_RECOG**, return a tiny **NDEF-like** payload: `Thanks: #<id>` where `<id>` is a monotonic sequence counter (record ID).
