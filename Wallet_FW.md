@@ -4,12 +4,13 @@
 
 This project explores, in a playful yet rigorous way, how one might encode a **crypto-charity wallet** entirely in **ARM Cortex‑M assembly language**. The exercise is not meant to deliver a production wallet, but rather to demonstrate, in concrete low-level terms, how *rules and recognition systems* can be represented directly at the hardware/software boundary.  
 
-REFACTOR NOTES
+---
+##REFACTOR NOTES
 ======================================================================
-;  1. ISR Latency: NFC_IRQHandler now only buffers data.
-;  2. Arithmetic: udiv10 uses hardware UDIV instruction.
-;  3. Boot: SecureBoot stub patched to allow demo execution.
-;  4. Architecture: Main_Loop handles logic and transmission.
+- 1. ISR Latency: NFC_IRQHandler now only buffers data.
+- 2. Arithmetic: udiv10 uses hardware UDIV instruction.
+- 3. Boot: SecureBoot stub patched to allow demo execution.
+- 4. Architecture: Main_Loop handles logic and transmission.
 ======================================================================
 ---
 
