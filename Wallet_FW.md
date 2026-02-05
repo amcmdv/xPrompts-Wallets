@@ -6,12 +6,10 @@ This project explores, in a playful yet rigorous way, how one might encode a **c
 
 ---
 ##REFACTOR NOTES
-======================================================================
 - 1. ISR Latency: NFC_IRQHandler now only buffers data.
 - 2. Arithmetic: udiv10 uses hardware UDIV instruction.
 - 3. Boot: SecureBoot stub patched to allow demo execution.
 - 4. Architecture: Main_Loop handles logic and transmission.
-======================================================================
 ---
 
 ## Concept  
