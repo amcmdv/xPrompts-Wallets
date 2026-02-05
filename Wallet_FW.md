@@ -577,16 +577,11 @@ Verify_Donation_Signature_Ct:
     .thumb_func
 udiv10:
     ; reciprocal multiply trick for speed is omitted; use library call if available.
-    movs r2, #0
-    movs r1, #0
-1:  cmp  r0, #10
-    blo  2f
-    subs r0, r0, #10
-    adds r2, r2, #1
-    b    1b
-2:  mov  r1, r0
-    mov  r0, r2
-    bx   lr
+    movs r2, #10
+    udiv r3, r0, r2        ; r3 = Input / 10 (Temporary Quotient)
+    mls r1, r3, r2, r0     ; r1 = Input - (r3 x10)
+    mov r0, r3             ; mOVE quotient to r0 to match return spec
+    bx  lr
 
 ; ------------ End -------------------------------------------
 
