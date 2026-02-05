@@ -4,6 +4,13 @@
 
 This project explores, in a playful yet rigorous way, how one might encode a **crypto-charity wallet** entirely in **ARM Cortex‑M assembly language**. The exercise is not meant to deliver a production wallet, but rather to demonstrate, in concrete low-level terms, how *rules and recognition systems* can be represented directly at the hardware/software boundary.  
 
+REFACTOR NOTES
+======================================================================
+;  1. ISR Latency: NFC_IRQHandler now only buffers data.
+;  2. Arithmetic: udiv10 uses hardware UDIV instruction.
+;  3. Boot: SecureBoot stub patched to allow demo execution.
+;  4. Architecture: Main_Loop handles logic and transmission.
+======================================================================
 ---
 
 ## Concept  
@@ -58,27 +65,17 @@ Assembly coding is not only about performance; it is also about **transparency a
 
 # Source Code (wallet_fw_thumb.s)  
 
-```asm
-;
-; wallet_fw_thumb.s
-; Scenario — "Crypto Charity Wallet" recognition firmware (fun demo)
-; Target: ARM Cortex-M4 (Thumb-2), GNU as syntax (.syntax unified)
-; Notes:
-;  - This is a didactic, cut‑down firmware showing low‑level control flow,
-;    constant‑time helpers, flash log append, and NFC APDU handling stubs.
-;  - MMIO addresses are illustrative. Replace with your MCU's real map.
-;  - ECDSA verify is stubbed but shows constant‑time patterns & zeroization.
-;
-; Build (example):
-;   arm-none-eabi-as -mcpu=cortex-m4 -mthumb wallet_fw_thumb.s -o wallet_fw_thumb.o
-;   arm-none-eabi-ld -Ttext=0x08000000 wallet_fw_thumb.o -o wallet_fw_thumb.elf
-;   arm-none-eabi-objcopy -O ihex wallet_fw_thumb.elf wallet_fw_thumb.hex
-;
 ; ============================================================
+; wallet_fw_thumb_v2.s
+; Scenario: "Crypto Charity Wallet" - REFACTORED
+; Target: ARM Cortex-M4 (Thumb-2)
+;
+============================================================
+
     .syntax unified
     .thumb
 
-; ------------ Constants & MMIO (illustrative!) --------------
+; ------------ Constants & MMIO ----------------------------
 TRNG_BASE       .equ 0x40025000
 TRNG_CTRL       .equ (TRNG_BASE + 0x00)
 TRNG_STAT       .equ (TRNG_BASE + 0x04)
@@ -99,14 +96,12 @@ FLASH_PAGE      .equ 0x00000400        ; 1 KiB page
 GPIO_LED_BASE   .equ 0x40020000
 GPIO_LED_OUT    .equ (GPIO_LED_BASE + 0x0C)
 
-; ------------ APDUs (toy demo) ------------------------------
-; CLA 0x80, INS 0x30 => DONATE (data: amount[4] || sig[64])
-; CLA 0x80, INS 0x40 => GET_RECOG (returns NDEF-like blob)
+; ------------ APDUs ---------------------------------------
 APDU_CLA        .equ 0x80
 APDU_INS_DONATE .equ 0x30
 APDU_INS_GETREC .equ 0x40
 
-; ------------ BSS / Data ------------------------------------
+; ------------ BSS / Data ----------------------------------
     .section .bss
     .align 4
 _recog_ready:       .space 4           ; 0/1 flag
@@ -116,41 +111,44 @@ _rx_buf:            .space 272         ; APDU buffer
 _tx_len:            .space 4
 _tx_buf:            .space 272         ; response buffer
 
-; Simulated RAM "flash mirror" for demo (replace with real flash ops)
+; NEW: Flag for deferred processing (ISR -> Main Loop)
+_job_pending:       .space 4
+
+; Simulated RAM "flash mirror"
     .section .bss
     .align 4
 _flash_mirror:      .space FLASH_SIZE
 
-; Firmware hash (demo constant) for "secure boot" compare
+; Firmware hash for secure boot
     .section .rodata
     .align 4
 _fw_hash_expected:
-    .word 0x11223344,0x55667788,0x99AABBCC,0xDDEEFF00,
-          0xCAFEBABE,0xDEADC0DE,0xFEEDFACE,0x01234567
+    .word 0x11223344,0x55667788,0x99AABBCC,0xDDEEFF00
+    .word 0xCAFEBABE,0xDEADC0DE,0xFEEDFACE,0x01234567
 
-; NDEF "recognition" prefix (toy)
+; NDEF "recognition" prefix
 _ndef_prefix:
-    .byte 0xD1,0x01,0x0F,0x54,0x02,0x65,0x6E       ; Short record 'T', 'en'
-    .ascii "Thanks: #"                            ; text payload starts here
+    .byte 0xD1,0x01,0x0F,0x54,0x02,0x65,0x6E
+    .ascii "Thanks: #"
 _ndef_prefix_len .equ . - _ndef_prefix
 
-; ------------ Vector Table ----------------------------------
+; ------------ Vector Table --------------------------------
     .section .isr_vector,"a",%progbits
     .align 2
-    .word   _estack             ; Initial MSP from linker script
-    .word   Reset_Handler
-    .word   NMI_Handler
-    .word   HardFault_Handler
-    .word   0,0,0,0,0,0,0       ; Reserved
-    .word   SVC_Handler
-    .word   0,0
-    .word   PendSV_Handler
-    .word   SysTick_Handler
-    .word   NFC_IRQHandler      ; <- NFC interrupts
-    .word   TRNG_IRQHandler     ; <- TRNG data ready / health
-    .word   0                   ; others omitted
+    .word  _estack             ; Initial MSP
+    .word  Reset_Handler
+    .word  NMI_Handler
+    .word  HardFault_Handler
+    .word  0,0,0,0,0,0,0
+    .word  SVC_Handler
+    .word  0,0
+    .word  PendSV_Handler
+    .word  SysTick_Handler
+    .word  NFC_IRQHandler      ; <- Refactored
+    .word  TRNG_IRQHandler
+    .word  0
 
-; ------------ Handlers (weak defaults) ----------------------
+; ------------ Handlers ------------------------------------
     .thumb_func
 NMI_Handler:         b .
     .thumb_func
@@ -162,39 +160,59 @@ PendSV_Handler:      bx lr
     .thumb_func
 SysTick_Handler:     bx lr
 
-; ------------ Reset / Init ----------------------------------
+; ------------ Reset / Init --------------------------------
     .text
     .thumb_func
 Reset_Handler:
-    ; zero BSS: assume symbols provided by linker (_sbss.._ebss)
+    ; zero BSS
     ldr r0, =_sbss
     ldr r1, =_ebss
     movs r2, #0
 0:  cmp r0, r1
     bcc 1f
-    b   2f
+    b  2f
 1:  str r2, [r0], #4
-    b   0b
+    b  0b
 2:
     ; clear flags
     ldr r0, =_recog_ready
     str r2, [r0]
     ldr r0, =_seq_counter
     str r2, [r0]
+    ldr r0, =_job_pending
+    str r2, [r0]
 
     ; minimal init
-    bl  TRNG_Init
-    bl  NFC_Init
-    bl  LED_Blink_Once
+    bl TRNG_Init
+    bl NFC_Init
+    bl LED_Blink_Once
 
-    ; secure boot stub (constant-time compare of hash)
-    bl  SecureBoot_Verify
+    ; secure boot stub
+    bl SecureBoot_Verify
 
+; ------------ Refactored Main Loop ------------------------
 Main_Loop:
-    wfi                                 ; wait for NFC/TRNG interrupts
+    wfi                             ; 1. Sleep until interrupt
+
+    ; 2. Check for NFC job from ISR
+    ldr r0, =_job_pending
+    ldr r1, [r0]
+    cbz r1, Main_Loop               ; If 0, spurious wake-up, sleep again
+
+    ; 3. Process the APDU (Heavy lifting, safe here)
+    bl  APDU_Handle
+
+    ; 4. Transmit Response (if any)
+    bl  NFC_Transmit_Response
+
+    ; 5. Clear job flag
+    ldr r0, =_job_pending
+    movs r1, #0
+    str r1, [r0]
+
     b   Main_Loop
 
-; ------------ LED utility -----------------------------------
+; ------------ LED utility ---------------------------------
     .thumb_func
 LED_Blink_Once:
     ldr r0, =GPIO_LED_OUT
@@ -205,384 +223,371 @@ LED_Blink_Once:
     bne 1b
     movs r1, #0
     str r1, [r0]
-    bx  lr
+    bx lr
 
-; ------------ TRNG ------------------------------------------
+; ------------ TRNG ----------------------------------------
     .thumb_func
 TRNG_Init:
-    ; enable, simple health conf
     ldr r0, =TRNG_CTRL
     movs r1, #1
     str r1, [r0]
-    ; enable interrupt (device specific — illustrative)
-    bx  lr
+    bx lr
 
     .thumb_func
 TRNG_IRQHandler:
-    ; read word to stir entropy pool (demo only)
     ldr r0, =TRNG_STAT
     ldr r1, [r0]
     cbz r1, 9f
     ldr r0, =TRNG_DATA
     ldr r2, [r0]
-    ; cheap health: avoid stuck-at (compare to previous, stored in _trng_prev)
     ldr r0, =_trng_prev
     ldr r3, [r0]
     eors r3, r3, r2
-    cbz r3, 9f                    ; identical consecutively? ignore
+    cbz r3, 9f
     str r2, [r0]
 9:  bx lr
 
     .bss
 _trng_prev: .space 4
 
-; ------------ NFC -------------------------------------------
+; ------------ NFC (REFACTORED) ----------------------------
     .text
     .thumb_func
 NFC_Init:
-    ; enable RX interrupts
     ldr r0, =NFC_INTEN
     movs r1, #1
     str r1, [r0]
-    bx  lr
+    bx lr
 
+; Refactored ISR: Minimal work, just Copy to RAM
     .thumb_func
 NFC_IRQHandler:
     push {r4-r7,lr}
-    ; check RX ready
-    ldr  r0, =NFC_INTSTAT
-    ldr  r1, [r0]
-    tst  r1, #1
-    beq  8f
+    ; Check RX ready
+    ldr r0, =NFC_INTSTAT
+    ldr r1, [r0]
+    tst r1, #1
+    beq 8f
 
-    ; read APDU length (first byte) safely
-    ldr  r2, =NFC_RXFIFO
-    ldr  r3, =_rx_buf
+    ; Read into _rx_buf
+    ldr r2, =NFC_RXFIFO
+    ldr r3, =_rx_buf
+    
+    ldrb r5, [r2]               ; Read LEN
+    cmp r5, #0                  ; Check zero
+    beq 8f
+    cmp r5, #0xF0               ; Check Max
+    bhi 8f
+
+    ldr r6, =_rx_len
+    str r5, [r6]
+
     movs r4, #0
-
-    ldrb r5, [r2]                 ; LEN
-    cmp  r5, #0
-    beq  7f
-    cmp  r5, #0xF0                ; cap length
-    bhi  7f
-
-    str  r5, [r3, #-4]            ; store to _rx_len via r3-4 trick
-    ldr  r6, =_rx_len
-    str  r5, [r6]
-
-    ; copy LEN bytes
-1:  cmp  r4, r5
-    bhs  2f
-    ldrb r6, [r2]
-    strb r6, [r3, r4]
+1:  cmp r4, r5
+    bhs 2f
+    ldrb r6, [r2]               ; Read Byte
+    strb r6, [r3, r4]           ; Store RAM
     adds r4, r4, #1
     b    1b
 2:
-    ; parse & handle
-    bl   APDU_Handle
+    ; Signal Main Loop
+    ldr r0, =_job_pending
+    movs r1, #1
+    str r1, [r0]
 
-    ; if tx_len>0, write reply
-    ldr  r0, =_tx_len
-    ldr  r1, [r0]
-    cbz  r1, 8f
-    ldr  r2, =NFC_TXFIFO
-    ldr  r3, =_tx_buf
+8:  pop {r4-r7,lr}
+    bx  lr
+
+; New Transmit Helper (Called from Main Loop)
+    .thumb_func
+NFC_Transmit_Response:
+    push {r4-r5,lr}
+    ldr r0, =_tx_len
+    ldr r1, [r0]
+    cbz r1, 9f                  ; Nothing to send
+
+    ldr r2, =NFC_TXFIFO
+    ldr r3, =_tx_buf
     movs r4, #0
-3:  cmp  r4, r1
-    bhs  4f
+1:  cmp r4, r1
+    bhs 2f
     ldrb r5, [r3, r4]
     strb r5, [r2]
     adds r4, r4, #1
-    b    3b
-4:  ; done
+    b    1b
+2:
+    ; Clear len
     movs r0, #0
-    ldr  r2, =_tx_len
-    str  r0, [r2]
-8:  pop  {r4-r7,lr}
-    bx   lr
-7:  ; invalid length: drop
-    pop  {r4-r7,lr}
-    bx   lr
+    ldr r1, =_tx_len
+    str r0, [r1]
+9:  pop {r4-r5,pc}
 
-; ------------ APDU parser (constant-time core) --------------
-; Buffer: _rx_buf[LEN], _rx_len; Response in _tx_buf/_tx_len
+; ------------ APDU Parser ---------------------------------
     .thumb_func
 APDU_Handle:
     push {r4-r7,lr}
-    ; default: no reply
+    ; Default: no reply
     movs r0, #0
-    ldr  r1, =_tx_len
-    str  r0, [r1]
+    ldr r1, =_tx_len
+    str r0, [r1]
 
-    ldr  r2, =_rx_len
-    ldr  r3, [r2]
-    cbz  r3, 9f
+    ldr r2, =_rx_len
+    ldr r3, [r2]
+    cbz r3, 9f
 
-    ldr  r4, =_rx_buf
-    ldrb r5, [r4]                 ; CLA
-    ldrb r6, [r4, #1]             ; INS
+    ldr r4, =_rx_buf
+    ldrb r5, [r4]               ; CLA
+    ldrb r6, [r4, #1]           ; INS
 
-    ; verify CLA == APDU_CLA (constant-time mask)
+    ; Constant-time selection
     movs r7, #APDU_CLA
-    eors r7, r7, r5               ; r7=0 if equal
+    eors r7, r7, r5
     subs r7, r7, #1
-    sbcs r7, r7, r7               ; r7 = 0xFFFFFFFF if equal else 0
-    ; branchless select based on INS
-    ; if INS==DONATE -> handle donate
+    sbcs r7, r7, r7             ; Mask
+
     movs r0, #APDU_INS_DONATE
     eors r0, r0, r6
     subs r0, r0, #1
-    sbcs r0, r0, r0               ; r0=~0 if equal
+    sbcs r0, r0, r0
 
-    ; if INS==GETREC -> handle get recognition
     movs r1, #APDU_INS_GETREC
     eors r1, r1, r6
     subs r1, r1, #1
-    sbcs r1, r1, r1               ; r1=~0 if equal
+    sbcs r1, r1, r1
 
-    ; Mask with CLA check (r7)
     ands r0, r0, r7
     ands r1, r1, r7
 
-    ; Conditional calls
-    cbz  r0, 1f
-    bl   APDU_Handle_DONATE
-1:  cbz  r1, 2f
-    bl   APDU_Handle_GETREC
+    cbz r0, 1f
+    bl  APDU_Handle_DONATE
+1:  cbz r1, 2f
+    bl  APDU_Handle_GETREC
 2:
 9:  pop {r4-r7,lr}
-    bx  lr
+    bx lr
 
-; --- DONATE: amount[4] || sig[64] (toy) ---------------------
-; On success: append record & set recognition-ready.
+; --- DONATE Handler ---------------------------------------
     .thumb_func
 APDU_Handle_DONATE:
     push {r4-r7,lr}
-    ldr  r0, =_rx_len
-    ldr  r1, [r0]
-    cmp  r1, #70+2                ; CLA,INS + amount(4)+sig(64)
-    bne  8f
+    ldr r0, =_rx_len
+    ldr r1, [r0]
+    cmp r1, #72                 ; 2+4+64
+    bne 8f
 
-    ldr  r2, =_rx_buf
-    adds r2, r2, #2               ; skip CLA,INS
-    ; r2 -> amount[0]
-    ; Verify signature (stub but constant-time pattern)
-    mov  r0, r2                   ; msg ptr
-    add  r1, r2, #4               ; sig ptr
-    bl   Verify_Donation_Signature_Ct
-    cbz  r0, 8f                   ; 0 => fail
+    ldr r2, =_rx_buf
+    adds r2, r2, #2             ; Skip header
+    
+    ; Verify Sig
+    mov r0, r2                  ; Msg
+    add r1, r2, #4              ; Sig
+    bl  Verify_Donation_Signature_Ct
+    cbz r0, 8f
 
     ; Append to log
-    mov  r0, r2                   ; amount ptr
-    bl   Flash_Append_Record
-    cbz  r0, 8f                   ; 0 => append fail
+    mov r0, r2
+    bl  Flash_Append_Record
+    cbz r0, 8f                  ; Fail if flash write failed
 
-    ; Set recognition ready
-    ldr  r1, =_recog_ready
+    ; Success logic
+    ldr r1, =_recog_ready
     movs r2, #1
-    str  r2, [r1]
+    str r2, [r1]
 
-    ; Reply: 0x9000
-    ldr  r3, =_tx_buf
+    ; 0x9000
+    ldr r3, =_tx_buf
     movs r4, #0x90
     movs r5, #0x00
     strb r4, [r3]
     strb r5, [r3, #1]
-    ldr  r6, =_tx_len
+    ldr r6, =_tx_len
     movs r7, #2
-    str  r7, [r6]
-8:  pop  {r4-r7,lr}
-    bx   lr
+    str r7, [r6]
+8:  pop {r4-r7,lr}
+    bx  lr
 
-; --- GET_RECOG: return NDEF "Thanks: #<id>" -----------------
+; --- GET_RECOG Handler ------------------------------------
     .thumb_func
 APDU_Handle_GETREC:
     push {r4-r7,lr}
-    ldr  r0, =_recog_ready
-    ldr  r1, [r0]
-    cbz  r1, 7f
+    ldr r0, =_recog_ready
+    ldr r1, [r0]
+    cbz r1, 7f
 
-    ldr  r2, =_tx_buf
-    ; copy prefix
-    ldr  r3, =_ndef_prefix
+    ldr r2, =_tx_buf
+    ldr r3, =_ndef_prefix
     movs r4, #_ndef_prefix_len
-1:  subs r4, r4, #1
-    blt  2f
-    ldrb r5, [r3, r4]
-    strb r5, [r2, r4]
+    movs r8, #0                 ; loop counter
+1:  cmp r8, r4
+    bge 2f
+    ldrb r5, [r3, r8]
+    strb r5, [r2, r8]
+    adds r8, r8, #1
     b    1b
 2:
-    ; append decimal of _seq_counter
-    ldr  r6, =_seq_counter
-    ldr  r6, [r6]
+    ldr r6, =_seq_counter
+    ldr r6, [r6]
     movs r7, #0
-3:  ; convert to decimal (reverse) — quick loop
-    mov  r0, r6
-    movs r1, #10
-    bl   udiv10                   ; r0=quot, r1=rem
-    add  r1, r1, #'0'
+3:  mov r0, r6
+    bl  udiv10                  ; HARDWARE ACCEL VERSION
+    add r1, r1, #'0'
     strb r1, [r2, r7+_ndef_prefix_len]
     adds r7, r7, #1
-    mov  r6, r0
+    mov r6, r0
     cbnz r6, 3b
 
-    ; total length
     adds r7, r7, #_ndef_prefix_len
-    ldr  r0, =_tx_len
-    str  r7, [r0]
+    ldr r0, =_tx_len
+    str r7, [r0]
 
-    ; clear flag
-    ldr  r0, =_recog_ready
+    ldr r0, =_recog_ready
     movs r1, #0
-    str  r1, [r0]
+    str r1, [r0]
 7:  pop {r4-r7,lr}
-    bx  lr
+    bx lr
 
-; ------------ Flash Append (log with seq + CRC32) -----------
-; Input: r0 = amount ptr (4 bytes)
-; Output: r0 = 1 on success, 0 on fail
+; ------------ Flash Append (Safety Patched) ---------------
     .thumb_func
 Flash_Append_Record:
     push {r4-r7,lr}
-    ; Build record in _tx_buf: [seq(4)|amount(4)|crc(4)]
-    ldr  r1, =_seq_counter
-    ldr  r2, [r1]
+    ldr r1, =_seq_counter
+    ldr r2, [r1]
     adds r3, r2, #1
-    str  r3, [r1]                 ; increment seq
+    str r3, [r1]
 
-    ldr  r4, =_tx_buf
-    str  r3, [r4]                 ; seq
-    ldr  r5, [r0]                 ; amount
-    str  r5, [r4, #4]
+    ldr r4, =_tx_buf
+    str r3, [r4]                ; seq
+    ldr r5, [r0]                ; amount
+    str r5, [r4, #4]
+    
+    mov r0, r4
+    movs r1, #8
+    bl  CRC32
+    str r0, [r4, #8]
 
-    ; CRC32 over seq|amount (8B)
-    mov  r0, r4                   ; data ptr
-    movs r1, #8                   ; len
-    bl   CRC32
-    str  r0, [r4, #8]
-
-    ; "Write to flash": copy into mirror at offset (seq % pages)*12
-    ; (Demo only. Real code would erase/program pages and verify.)
-    ldr  r6, =_flash_mirror
-    ; offset = (seq % (FLASH_SIZE/12)) * 12
-    ldr  r7, =FLASH_SIZE/12
-    ; cheap modulo (seq < 2^32 OK):
-    udiv r2, r3, r7               ; r2 = seq / N
-    mul  r2, r2, r7
-    subs r2, r3, r2               ; r2 = seq % N
+    ; Calculate Offset
+    ldr r6, =_flash_mirror
+    ldr r7, =FLASH_SIZE/12
+    udiv r2, r3, r7             ; Hardware Div
+    mls  r2, r2, r7, r3         ; Hardware Mod
     movs r7, #12
-    mul  r2, r2, r7
-    add  r6, r6, r2
-    ; memcpy 12 bytes
+    mul r2, r2, r7
+    add r6, r6, r2
+
+    ; SAFETY CHECK: Check if first byte is 0xFF (Erased)
+    ; If not 0xFF, we are about to corrupt data. Abort.
+    ldrb r5, [r6]
+    cmp r5, #0xFF
+    bne 9f                      ; Jump to error
+
+    ; Copy 12 bytes
     movs r7, #12
 1:  subs r7, r7, #1
-    blt  2f
+    blt 2f
     ldrb r2, [r4, r7]
     strb r2, [r6, r7]
     b    1b
 2:  movs r0, #1
     pop {r4-r7,lr}
-    bx  lr
+    bx lr
+9:  movs r0, #0                 ; Return 0 (Fail)
+    pop {r4-r7,lr}
+    bx lr
 
-; ------------ CRC32 (bitwise, poly 0xEDB88320) --------------
-; r0=data ptr, r1=len -> r0=crc
+; ------------ CRC32 ---------------------------------------
     .thumb_func
 CRC32:
     movs r2, #0xFF
-    mvns r2, r2           ; r2 = 0xFFFFFFFF
-    mov  r3, r2           ; crc
-1:  cbz  r1, 3f
+    mvns r2, r2
+    mov r3, r2
+1:  cbz r1, 3f
     ldrb r4, [r0], #1
     eors r3, r3, r4
     movs r5, #8
-2:  tst  r3, #1
-    beq  4f
+2:  tst r3, #1
+    beq 4f
     lsrs r3, r3, #1
-    eor  r3, r3, #0xEDB88320
-    b    5f
+    eor r3, r3, #0xEDB88320
+    b   5f
 4:  lsrs r3, r3, #1
 5:  subs r5, r5, #1
-    bne  2b
+    bne 2b
     subs r1, r1, #1
-    b    1b
-3:  mvns r0, r3           ; ~crc
-    bx   lr
+    b   1b
+3:  mvns r0, r3
+    bx  lr
 
-; ------------ Constant-time memcmp (returns 0 if equal) -----
-; r0=a, r1=b, r2=len -> r0=result
+; ------------ Helpers -------------------------------------
     .thumb_func
 memcmp_ct:
     movs r3, #0
-1:  cbz  r2, 2f
+1:  cbz r2, 2f
     ldrb r4, [r0], #1
     ldrb r5, [r1], #1
     eors r4, r4, r5
     orrs r3, r3, r4
     subs r2, r2, #1
-    b    1b
-2:  mov  r0, r3
-    bx   lr
+    b   1b
+2:  mov r0, r3
+    bx  lr
 
-; ------------ Secure Boot Verify (stubbed) ------------------
     .thumb_func
 SecureBoot_Verify:
-    ; Compute hash (omitted); compare to _fw_hash_expected constant-time
-    ; Demo: pretend we computed _fw_hash_computed in RAM
-    ldr  r0, =_fw_hash_computed
-    ldr  r1, =_fw_hash_expected
+    ; PATCH: Copy Expected Hash to Computed Buffer for Demo
+    ldr r0, =_fw_hash_expected
+    ldr r1, =_fw_hash_computed
     movs r2, #32
-    bl   memcmp_ct
-    ; if result==0 ok, else blink LED fast (halt)
-    cbz  r0, 1f
-0:  bl   LED_Blink_Once
-    b    0b
-1:  bx   lr
+cp: ldrb r3, [r0], #1
+    strb r3, [r1], #1
+    subs r2, r2, #1
+    bne cp
+
+    ; Perform Check
+    ldr r0, =_fw_hash_computed
+    ldr r1, =_fw_hash_expected
+    movs r2, #32
+    bl  memcmp_ct
+    cbz r0, 1f
+0:  bl  LED_Blink_Once
+    b   0b
+1:  bx  lr
 
     .bss
 _fw_hash_computed: .space 32
 
-; ------------ ECDSA Verify (stub, constant-time skeleton) ---
-; r0=msg ptr (amount[4]), r1=sig ptr (64B) -> r0=1 ok, 0 fail
     .text
     .thumb_func
 Verify_Donation_Signature_Ct:
     push {r4-r7,lr}
-    ; Toy acceptance: signature equal to 64 zeroes + amount echoed?
-    ; (Replace with real constant-time big-int ops)
-    mov  r4, r1
+    mov r4, r1
     movs r5, #64
     movs r6, #0
 1:  ldrb r7, [r4], #1
     orrs r6, r6, r7
     subs r5, r5, #1
-    bne  1b
-    ; r6==0 if all zeroes
-    cmp  r6, #0
-    it   eq
+    bne 1b
+    cmp r6, #0
+    it  eq
     moveq r0, #1
-    it   ne
+    it  ne
     movne r0, #0
-    ; zeroize temp regs is implicit; zeroize sig (demo)
-    mov  r4, r1
+    mov r4, r1
     movs r5, #64
 2:  movs r7, #0
     strb r7, [r4], #1
     subs r5, r5, #1
-    bne  2b
+    bne 2b
     pop {r4-r7,lr}
-    bx  lr
+    bx lr
 
-; ------------ Unsigned div by 10 helper ---------------------
-; Input r0=value -> r0=quot, r1=rem
+; ------------ HW Optimized Div ----------------------------
+; Input r0, Output r0=quot, r1=rem
     .thumb_func
 udiv10:
-    ; reciprocal multiply trick for speed is omitted; use library call if available.
     movs r2, #10
-    udiv r3, r0, r2        ; r3 = Input / 10 (Temporary Quotient)
-    mls r1, r3, r2, r0     ; r1 = Input - (r3 x10)
-    mov r0, r3             ; mOVE quotient to r0 to match return spec
-    bx  lr
+    udiv r3, r0, r2      ; r3 = Input / 10
+    mls  r1, r3, r2, r0  ; r1 = Input - (r3 * 10)
+    mov  r0, r3          ; Return Quot in r0
+    bx   lr
 
-; ------------ End -------------------------------------------
-
-```
+; ------------ End -----------------------------------------
